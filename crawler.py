@@ -1,6 +1,7 @@
 import requests
 import os
 import json
+from bs4 import BeautifulSoup
 
 BASE_URL = 'https://en.wikipedia.org'
 START_URL = 'https://en.wikipedia.org/wiki/FIFA_World_Cup'

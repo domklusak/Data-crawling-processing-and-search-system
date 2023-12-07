@@ -6,7 +6,7 @@ import re
 lucenevm = lucene.initVM(vmargs=['-Djava.awt.headless=true'])
 
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col
+from pyspark.sql.functions import col, regexp_extract
 from pyspark.sql.functions import udf
 from pyspark.sql.types import StringType, MapType
 
@@ -59,6 +59,11 @@ class LuceneApp:
 
         self.writer.addDocument(doc)
 
+    def extract_snippet(content, sentence_count=2):
+        # Use a simple method to split the content into sentences and return the first few
+        sentences = content.split('. ')[:sentence_count]
+        return '. '.join(sentences) + ('.' if sentences else '')
+
     def search(self, query_string, max_results=5):
         if self.searcher is None:
             self.searcher = IndexSearcher(DirectoryReader.open(self.store))
@@ -72,17 +77,13 @@ class LuceneApp:
             hit_doc = self.searcher.doc(hit.doc)
             url = hit_doc.get("URL")
             score = hit.score
-            match_details = hit_doc.get("match_details")  # Retrieves a single string with all values
-            founding_dates = hit_doc.get("founding_dates")
-            top_scorers = hit_doc.get("top_scorers")
+            content_snippet = hit_doc.get("content")[:400]  # Retrieves a snippet of the content
 
-            # Include these in your results
+            # Include URL, score, and content snippet in your results
             result = {
                 "URL": url,
                 "Score": score,
-                "Match Details": match_details,
-                "Founding Dates": founding_dates,
-                "Top Scorers": top_scorers
+                "Content Snippet": content_snippet
             }
             results.append(result)
 
@@ -177,21 +178,30 @@ def extract_details(text):
         'stadiums': stadiums
     }
 
+def title_to_url_suffix(title):
+    return title.replace(" ", "_")
 
 
 remove_markup_udf = udf(remove_markup, StringType())
 extract_details_udf = udf(extract_details, MapType(StringType(), StringType()))
+title_to_url_suffix_udf = udf(title_to_url_suffix, StringType())
 
-def filter_and_process(df):
+def filter_and_process(df, indexed_urls_suffix):
+    # Extract necessary columns from the XML structure
+    df = df.withColumn('title', col('title'))
+    df = df.withColumn('text', regexp_extract('revision.text._VALUE', r'<text.*?>(.*?)</text>', 1))
 
-    keywords = ["FIFA World Cup", "national football team", "national soccer team"]
-    filtered_df = df.filter(df['title'].rlike('|'.join(keywords)))
+    # Filtering based on the title
+    url_pattern = '|'.join([re.escape(suffix) for suffix in indexed_urls_suffix])
+    filtered_df = df.filter(df['title'].rlike(url_pattern))
 
-    # Apply the UDFs to clean the content and extract details
-    processed_df = filtered_df.withColumn("clean_content", remove_markup_udf(col("revision.text._VALUE")))
+    # Apply cleaning and extracting details
+    processed_df = filtered_df.withColumn("clean_content", remove_markup_udf(col("text")))
     extracted_df = processed_df.withColumn("extracted_details", extract_details_udf(col("clean_content")))
+    print(extracted_df)
 
     return extracted_df
+
 
 
 def convert_df_to_json(df, output_path):
@@ -204,11 +214,30 @@ def index_processed_data(app, directory="processed_data"):
             with open(file_path, 'r') as f:
                 for line in f:
                     json_object = json.loads(line)
-                    url = json_object.get("url", "empty")  # Extract URL if available
-                    content = json_object.get("content", "")  # Extract content
-                    # Extract additional fields if needed
+                    url = json_object.get("url", "empty")  
+                    content = json_object.get("content", "")
                     additional_fields = json_object.get("extracted_details", {})
                     app.index_document(url, content, additional_fields)
+
+def retrieve_urls_from_index(index_dir):
+    directory = FSDirectory.open(File(index_dir).toPath())
+    reader = DirectoryReader.open(directory)
+    urls = []
+
+    for i in range(reader.maxDoc()):
+        doc = reader.document(i)
+        url = doc.get("URL") 
+        if url:
+            urls.append(url)
+
+    reader.close()
+    return urls
+
+def retrieve_urls_suffix_from_index(index_directory):
+    full_urls = retrieve_urls_from_index(index_directory)
+    urls_suffix = [url.split('/')[-1] for url in full_urls]
+
+    return urls_suffix
 
 
 
@@ -217,37 +246,57 @@ def user_confirmation(prompt):
     response = input(prompt + " (y/n): ").lower()
     return response == 'y'
 
+
+def run_unit_tests(app):
+    test_queries = ["England national football team", "Lionel Messi"]
+    for query in test_queries:
+        print(f"\nTesting query: '{query}'")
+        results = app.search(query)
+        for result in results:
+            print(f"URL: {result['URL']}\nScore: {result['Score']}")
+            print(f"Relevant Information: {result['Content Snippet']}\n")
+
 if __name__ == "__main__":
-    process_data = input("Do you want to process new data? (y/n): ").lower()
-    if process_data == "y":
+    index_directory = "index"
+    process_data = user_confirmation("Do you want to process new data?")
+    if process_data:
         spark = init_spark_session()
         xml_file_path = "enwiki-latest-pages-articles1.xml-p1p41242"
         df = read_xml(spark, xml_file_path)
-        processed_df = filter_and_process(df)
+        indexed_urls_suffix = retrieve_urls_suffix_from_index(index_directory)
+        processed_df = filter_and_process(df, indexed_urls_suffix)
         json_output_path = "processed_data.json"
         convert_df_to_json(processed_df, json_output_path)
 
     app = LuceneApp()
-    print("Indexing original documents...")
-    app.index_documents_from_file("cleaned_data.json")
 
-    index_new_data = input("Do you want to index new processed data? (y/n): ").lower()
-    if index_new_data == "y":
+    index_original_data = user_confirmation("Do you want to index original documents?")
+    if index_original_data:
+        print("Indexing original documents...")
+        app.index_documents_from_file("cleaned_data.json")
+        print("Indexing complete!")
+
+    index_new_data = user_confirmation("Do you want to index new processed data?")
+    if index_new_data:
         print("Indexing processed documents...")
         index_processed_data(app, "processed_data.json")
+        print("Indexing complete!")
 
-    print("Indexing complete!")
     app.close()
+    continue_running = True
+    while continue_running:
+        print("\nOptions:\n1. Search\n2. Run Unit Tests\n3. Exit")
+        choice = input("Enter your choice (1/2/3): ")
 
-    while True:
-        action = input("Do you want to 'search'? (s) Or 'exit' to quit: ")
-        if action == "s":
+        if choice == '1':
             query_string = input("Enter search query: ")
             search_results = app.search(query_string)
             for result in search_results:
                 print(f"URL: {result['URL']}\nScore: {result['Score']}")
-                print(f"Match Details: {result['Match Details']}")
-                print(f"Founding Dates: {result['Founding Dates']}")
-                print(f"Top Scorers: {result['Top Scorers']}\n")
-        elif action == "exit":
-            break
+                print(f"Relevant Information: {result['Content Snippet']}\n")
+        elif choice == '2':
+            run_unit_tests(app)
+        elif choice == '3':
+            continue_running = False
+        else:
+            print("Invalid choice. Please enter 1, 2, or 3.")
