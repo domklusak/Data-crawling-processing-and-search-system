@@ -3,6 +3,8 @@ import json
 import lucene
 import html
 import re
+import json
+from clean_and_process import process_and_save_data
 lucenevm = lucene.initVM(vmargs=['-Djava.awt.headless=true'])
 
 from pyspark.sql import SparkSession
@@ -240,21 +242,17 @@ def retrieve_urls_suffix_from_index(index_directory):
     return urls_suffix
 
 
-
-
 def user_confirmation(prompt):
     response = input(prompt + " (y/n): ").lower()
     return response == 'y'
 
 
-def run_unit_tests(app):
-    test_queries = ["England national football team", "Lionel Messi"]
-    for query in test_queries:
-        print(f"\nTesting query: '{query}'")
-        results = app.search(query)
-        for result in results:
-            print(f"URL: {result['URL']}\nScore: {result['Score']}")
-            print(f"Relevant Information: {result['Content Snippet']}\n")
+def run_unit_test():
+    process_and_save_data("dummy_data.json", "cleaned_dummy_data.json")
+
+
+
+
 
 if __name__ == "__main__":
     index_directory = "index"
@@ -295,7 +293,7 @@ if __name__ == "__main__":
                 print(f"URL: {result['URL']}\nScore: {result['Score']}")
                 print(f"Relevant Information: {result['Content Snippet']}\n")
         elif choice == '2':
-            run_unit_tests(app)
+            run_unit_test()
         elif choice == '3':
             continue_running = False
         else:

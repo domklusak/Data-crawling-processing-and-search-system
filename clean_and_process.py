@@ -11,25 +11,20 @@ def extract_text_from_html(html_content):
     return cleaned_text
 
 
-def process_and_save_data():
+def process_and_save_data(input_file, output_file):
+    with open(input_file, 'r', encoding='utf-8') as file:
+        data_list = json.load(file)
+
     all_data = []
 
-    for filename in os.listdir(INPUT_DIRECTORY):
-        filepath = os.path.join(INPUT_DIRECTORY, filename)
-        with open(filepath, 'r', encoding='utf-8') as file:
-            data = json.load(file)
-            cleaned_content = extract_text_from_html(data["content"])
-            all_data.append({
-                "url": data["url"],
-                "content": cleaned_content
-            })
+    for data in data_list:
+        cleaned_content = extract_text_from_html(data["content"])
+        all_data.append({
+            "url": data["url"],
+            "content": cleaned_content
+        })
 
-    # ukladanie dat
-    with open(OUTPUT_FILE, 'w', encoding='utf-8') as output_file:
+    with open(output_file, 'w', encoding='utf-8') as output_file:
         json.dump(all_data, output_file, ensure_ascii=False, indent=4)
 
-
-INPUT_DIRECTORY = "downloaded_pages"
-OUTPUT_FILE = "cleaned_data.json"
-process_and_save_data()
 print("Data extraction completed")

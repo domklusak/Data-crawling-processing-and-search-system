@@ -1,0 +1,10 @@
+[
+    {
+        "url": "https://example.com/dummy_url_1",
+        "content": "Dummy content for URL 1. This is an example paragraph."
+    },
+    {
+        "url": "https://example.com/dummy_url_2",
+        "content": "Dummy content for URL 2. Another example paragraph with link ."
+    }
+]
