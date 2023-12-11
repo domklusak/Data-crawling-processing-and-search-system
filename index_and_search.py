@@ -3,9 +3,13 @@ import json
 import lucene
 import html
 import re
+import tempfile
 import json
+import xml.etree.ElementTree as ET
+from io import StringIO
 from clean_and_process import process_and_save_data
 lucenevm = lucene.initVM(vmargs=['-Djava.awt.headless=true'])
+
 
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, regexp_extract
@@ -251,6 +255,57 @@ def run_unit_test():
     process_and_save_data("dummy_data.json", "cleaned_dummy_data.json")
 
 
+def run_xml_processing_unit_test():
+    test_xml = False
+    test_xml_content = """
+    <pages>
+    <page>
+        <title>Argentina National Football Team</title>
+        <revision>
+            <text>
+                [[File:Argentina football team 2019.jpg|thumb|Argentina team in 2019]]
+                The '''Argentina national football team''' represents [[Argentina]] in men's international football and is administered by the [[Argentine Football Association]], the governing body for football in Argentina.
+                <!-- History section -->
+                <h2>History</h2>
+                Argentina's home stadium is [[Estadio Monumental]] in Buenos Aires.
+                <h2>World Cup Success</h2>
+                Argentina has won the [[FIFA World Cup]] three times: in [[1978 FIFA World Cup|1978]], [[1986 FIFA World Cup|1986]], and [[2022 FIFA World Cup|2022]].
+            </text>
+        </revision>
+    </page>
+    <page>
+        <title>Lionel Messi</title>
+        <revision>
+            <text>
+                [[File:Lionel Messi 2020.jpg|thumb|Lionel Messi in 2020]]
+                '''Lionel Messi''' is an Argentine professional footballer who plays for [[Paris Saint-Germain F.C.|Paris Saint-Germain]] and the Argentina national team.
+                <!-- Career section -->
+                <h2>Career</h2>
+                He is often considered the best player in the world and widely regarded as one of the greatest players of all time.
+                Messi has won a record seven [[Ballon d'Or]] awards.
+            </text>
+        </revision>
+    </page>
+</pages>
+    """
+    if test_xml == True:
+            # Write the XML content to a file
+        with open("test_data.xml", "w") as file:
+            spark = SparkSession.builder.appName("XML Processing Test").getOrCreate()
+            file.write(test_xml_content)
+            test_df = spark.read.format("xml").option("rowTag", "page").load("test_data.xml")
+            processed_test_df = filter_and_process(test_df)
+            processed_test_df.show(truncate=False)
+    tree = ET.parse(StringIO(test_xml_content))
+    root = tree.getroot()
+    for page in root.findall('page'):
+        title = page.find('title').text
+        text = page.find('./revision/text').text
+        clean_content = remove_markup(text)
+        extracted_details = extract_details(clean_content)
+        print(f"Title: {title}")
+        print(f"Clean Content: {clean_content}")
+
 
 
 
@@ -293,7 +348,10 @@ if __name__ == "__main__":
                 print(f"URL: {result['URL']}\nScore: {result['Score']}")
                 print(f"Relevant Information: {result['Content Snippet']}\n")
         elif choice == '2':
+            print("--------------UNIT TEST 1--------------\n")
             run_unit_test()
+            print("\n--------------UNIT TEST 2--------------\n")
+            run_xml_processing_unit_test()
         elif choice == '3':
             continue_running = False
         else:
